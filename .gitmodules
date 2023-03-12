@@ -1,0 +1,3 @@
+[submodule "dbus-rs"]
+	path = dbus-rs
+	url = git@github.com:mkiefel/dbus-rs.git
