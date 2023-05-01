@@ -75,8 +75,8 @@ impl PartialOrd for DeviceEvent {
     }
 }
 
-fn get_data(res: &[u8]) -> anyhow::Result<Data> {
-    Ok(Data {
+fn get_data(res: &[u8]) -> Data {
+    Data {
         co2: u16::from_le_bytes(res[0..2].try_into().unwrap()),
         _temperature: u16::from_le_bytes(res[2..4].try_into().unwrap()) as f32 / 20.0,
         _pressure: u16::from_le_bytes(res[4..6].try_into().unwrap()) as f32 / 10.0,
@@ -85,13 +85,13 @@ fn get_data(res: &[u8]) -> anyhow::Result<Data> {
         status: u8::from_le(res[8]).try_into().unwrap(),
         interval: Duration::from_secs(u16::from_le_bytes(res[9..11].try_into().unwrap()) as u64),
         ago: Duration::from_secs(u16::from_le_bytes(res[11..13].try_into().unwrap()) as u64),
-    })
+    }
 }
 
 async fn handle_device(
     adapter: &bluer::Adapter,
     address: &bluer::Address,
-) -> anyhow::Result<Option<DeviceInfo>> {
+) -> Result<Option<DeviceInfo>, bluer::Error> {
     let device = adapter.device(*address)?;
     let service_uuids = device.uuids().await?.unwrap_or_default();
     if !service_uuids.contains(&ARANET4_SERVICE) {
@@ -114,7 +114,7 @@ async fn handle_device(
                 continue;
             }
 
-            let data = get_data(&characteristic.read().await?)?;
+            let data = get_data(&characteristic.read().await?);
 
             device.disconnect().await?;
             return Ok(Some(DeviceInfo {
@@ -213,6 +213,11 @@ async fn scan_devices() -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Resu
                             stream_state.active_addresses.remove(
                                 &device_event.address);
                         },
+                        Err(err) if err.kind == bluer::ErrorKind::NotFound => {
+                            eprintln!("Not found: {}", device_event.address);
+                            stream_state.active_addresses.remove(
+                                &device_event.address);
+                        },
                         // Reschedule again after a little while. But return the
                         // error to the consumer.
                         Err(err) => {
@@ -224,7 +229,7 @@ async fn scan_devices() -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Resu
                                     address: device_event.address,
                                     next_update: Instant::now()
                                         + Duration::from_secs(60)});
-                            return Some((Err(err), stream_state));
+                            return Some((Err(anyhow::Error::new(err)), stream_state));
                         }
                     }
                 },
